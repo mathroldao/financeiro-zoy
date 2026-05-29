@@ -252,23 +252,37 @@ with aba1:
 
             resumo["Valor Formatado"] = resumo["Total Previsto"].apply(moeda)
 
-            fig = px.bar(
-                resumo,
-                x="Mês",
-                y="Total Previsto",
-                text="Valor Formatado"
-            )
+            st.subheader("Previsão de Recebimentos")
 
-            fig.update_traces(textposition="outside")
-            fig.update_layout(
-                height=430,
-                yaxis_title="Valor previsto",
-                xaxis_title="Mês de recebimento",
-                showlegend=False,
-                margin=dict(l=20, r=20, t=30, b=20)
-            )
+resumo = (
+    previsao
+    .groupby("Mês", as_index=False)["valor_faturado"]
+    .sum()
+    .sort_values("valor_faturado", ascending=False)
+)
 
-            st.plotly_chart(fig, use_container_width=True)
+valor_maximo = resumo["valor_faturado"].max()
+
+for _, row in resumo.iterrows():
+
+    mes = row["Mês"]
+    valor = row["valor_faturado"]
+
+    tamanho_barra = max(
+        1,
+        int((valor / valor_maximo) * 30)
+    )
+
+    st.markdown(f"### {mes}")
+    st.markdown(f"**{moeda(valor)}**")
+    st.code("█" * tamanho_barra)
+
+st.divider()
+
+st.metric(
+    "Total Previsto",
+    moeda(resumo["valor_faturado"].sum())
+)
 
             col30, col60, col90 = st.columns(3)
 
