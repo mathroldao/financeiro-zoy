@@ -316,7 +316,7 @@ with aba1:
         card("Qtd. NFs", qtd_nfs, "card-blue")
 
     st.divider()
-    st.subheader("Previsão de Recebimentos")
+    st.subheader("Previsão de Caixa Zoy (Líquido)")
 
     if df.empty:
         st.info("Nenhuma NF cadastrada ainda.")
@@ -333,40 +333,40 @@ with aba1:
                 previsao
                 .groupby(["mes_data", "Mês"], as_index=False)
                 .agg(
-                    valor_faturado=("valor_faturado", "sum"),
+                    liquido_zoy=("liquido_zoy", "sum"),
                     qtd_nfs=("id", "count")
                 )
                 .sort_values("mes_data", ascending=True)
             )
 
-            valor_maximo = resumo["valor_faturado"].max()
+            valor_maximo = resumo["liquido_zoy"].max()
 
             col_lista, col_cards = st.columns([2, 1])
 
             with col_lista:
                 for _, row in resumo.iterrows():
-                    percentual = 0 if valor_maximo == 0 else max(4, (row["valor_faturado"] / valor_maximo) * 100)
-                    forecast_card(row["Mês"], row["valor_faturado"], percentual, int(row["qtd_nfs"]))
+                    percentual = 0 if valor_maximo == 0 else max(4, (row["liquido_zoy"] / valor_maximo) * 100)
+                    forecast_card(row["Mês"], row["liquido_zoy"], percentual, int(row["qtd_nfs"]))
 
-                total_previsto = resumo["valor_faturado"].sum()
-                st.markdown(f"### Total previsto: {moeda(total_previsto)}")
+                total_previsto = resumo["liquido_zoy"].sum()
+                st.markdown(f"### Total líquido previsto: {moeda(total_previsto)}")
 
             with col_cards:
                 hoje = date.today()
                 prox_30 = previsao[
                     (previsao["data_recebimento"] >= hoje) &
                     (previsao["data_recebimento"] <= hoje + timedelta(days=30))
-                ]["valor_faturado"].sum()
+                ]["liquido_zoy"].sum()
 
                 prox_60 = previsao[
                     (previsao["data_recebimento"] >= hoje) &
                     (previsao["data_recebimento"] <= hoje + timedelta(days=60))
-                ]["valor_faturado"].sum()
+                ]["liquido_zoy"].sum()
 
                 prox_90 = previsao[
                     (previsao["data_recebimento"] >= hoje) &
                     (previsao["data_recebimento"] <= hoje + timedelta(days=90))
-                ]["valor_faturado"].sum()
+                ]["liquido_zoy"].sum()
 
                 card("Próximos 30 dias", moeda(prox_30), "card-green")
                 card("Próximos 60 dias", moeda(prox_60), "card-yellow")
@@ -375,7 +375,7 @@ with aba1:
             st.subheader("Próximos recebimentos")
 
             proximos = previsao.sort_values("data_recebimento").head(10).copy()
-            proximos["Valor"] = proximos["valor_faturado"].apply(moeda)
+            proximos["Valor Líquido"] = proximos["liquido_zoy"].apply(moeda)
             proximos["Previsão"] = pd.to_datetime(proximos["data_recebimento"], errors="coerce").dt.strftime("%d/%m/%Y")
 
             st.dataframe(
@@ -384,7 +384,7 @@ with aba1:
                     "campanha",
                     "influenciador",
                     "Previsão",
-                    "Valor",
+                    "Valor Líquido",
                     "status_real"
                 ]].rename(columns={
                     "cliente": "Cliente",
@@ -574,7 +574,7 @@ with aba3:
 # =========================
 
 with aba4:
-    st.header("Previsão Mensal")
+    st.header("Previsão Mensal - Líquido Zoy")
 
     if df.empty:
         st.info("Nenhuma NF cadastrada ainda.")
@@ -600,11 +600,11 @@ with aba4:
                 .sort_values("mes_data", ascending=True)
             )
 
-            valor_maximo = resumo["valor_faturado"].max()
+            valor_maximo = resumo["liquido_zoy"].max()
 
             for _, row in resumo.iterrows():
-                percentual = 0 if valor_maximo == 0 else max(4, (row["valor_faturado"] / valor_maximo) * 100)
-                forecast_card(row["Mês"], row["valor_faturado"], percentual, int(row["qtd_nfs"]))
+                percentual = 0 if valor_maximo == 0 else max(4, (row["liquido_zoy"] / valor_maximo) * 100)
+                forecast_card(row["Mês"], row["liquido_zoy"], percentual, int(row["qtd_nfs"]))
 
             tabela_resumo = resumo[["Mês", "valor_faturado", "comissao_zoy", "imposto", "liquido_zoy", "qtd_nfs"]].copy()
             tabela_resumo["valor_faturado"] = tabela_resumo["valor_faturado"].apply(moeda)
