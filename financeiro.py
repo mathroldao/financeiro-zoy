@@ -47,7 +47,7 @@ with aba1:
         st.metric("Reserva", "R$ 0,00")
 
     with col8:
-        st.metric("Casamento", "R$ 0,00")
+        st.metric("Em Atraso", "R$ 0,00")
 
 with aba2:
     st.header("Cadastrar NF")
