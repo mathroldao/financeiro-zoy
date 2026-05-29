@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import plotly.express as px
 from datetime import date, timedelta
 
 DB_NAME = "financeiro_zoy.db"
@@ -43,6 +42,47 @@ st.markdown("""
 .card-purple { border-left: 7px solid #7c3aed; }
 .card-yellow { border-left: 7px solid #eab308; }
 .card-red { border-left: 7px solid #ef4444; }
+.forecast-card {
+    padding: 18px 20px;
+    border-radius: 16px;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    box-shadow: 0 3px 14px rgba(0,0,0,0.05);
+    margin-bottom: 14px;
+}
+.forecast-month {
+    font-size: 20px;
+    font-weight: 800;
+    color: #111827;
+    margin-bottom: 4px;
+}
+.forecast-value {
+    font-size: 24px;
+    font-weight: 800;
+    color: #111827;
+    margin-bottom: 10px;
+}
+.bar-bg {
+    width: 100%;
+    height: 16px;
+    background: #eef2ff;
+    border-radius: 999px;
+    overflow: hidden;
+}
+.bar-fill {
+    height: 16px;
+    background: linear-gradient(90deg, #2563eb, #7c3aed);
+    border-radius: 999px;
+}
+.badge {
+    display: inline-block;
+    padding: 4px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    background: #fef3c7;
+    color: #92400e;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -51,10 +91,16 @@ st.markdown("""
 # =========================
 
 def moeda(valor):
+    try:
+        valor = float(valor)
+    except Exception:
+        valor = 0.0
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 
 def conectar():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
+
 
 def criar_tabela():
     conn = conectar()
@@ -84,11 +130,19 @@ def criar_tabela():
     cursor.execute("PRAGMA table_info(nfs)")
     colunas = [col[1] for col in cursor.fetchall()]
 
-    if "influenciador" not in colunas:
-        cursor.execute("ALTER TABLE nfs ADD COLUMN influenciador TEXT")
+    colunas_necessarias = {
+        "influenciador": "TEXT",
+        "cache_influ": "REAL",
+        "observacao": "TEXT",
+    }
+
+    for coluna, tipo in colunas_necessarias.items():
+        if coluna not in colunas:
+            cursor.execute(f"ALTER TABLE nfs ADD COLUMN {coluna} {tipo}")
 
     conn.commit()
     conn.close()
+
 
 def carregar_nfs():
     conn = conectar()
@@ -96,10 +150,16 @@ def carregar_nfs():
     conn.close()
 
     if not df.empty:
-        df["data_emissao"] = pd.to_datetime(df["data_emissao"]).dt.date
-        df["data_recebimento"] = pd.to_datetime(df["data_recebimento"]).dt.date
+        df["data_emissao"] = pd.to_datetime(df["data_emissao"], errors="coerce").dt.date
+        df["data_recebimento"] = pd.to_datetime(df["data_recebimento"], errors="coerce").dt.date
+        df["valor_faturado"] = pd.to_numeric(df["valor_faturado"], errors="coerce").fillna(0)
+        df["cache_influ"] = pd.to_numeric(df["cache_influ"], errors="coerce").fillna(0)
+        df["comissao_zoy"] = pd.to_numeric(df["comissao_zoy"], errors="coerce").fillna(0)
+        df["imposto"] = pd.to_numeric(df["imposto"], errors="coerce").fillna(0)
+        df["liquido_zoy"] = pd.to_numeric(df["liquido_zoy"], errors="coerce").fillna(0)
 
     return df
+
 
 def salvar_nf(cliente, campanha, influenciador, numero_nf, data_emissao, data_recebimento,
               valor_faturado, cache_influ, comissao_zoy, imposto, liquido_zoy,
@@ -121,6 +181,7 @@ def salvar_nf(cliente, campanha, influenciador, numero_nf, data_emissao, data_re
 
     conn.commit()
     conn.close()
+
 
 def atualizar_nf(id_nf, cliente, campanha, influenciador, numero_nf, data_emissao, data_recebimento,
                  valor_faturado, cache_influ, comissao_zoy, imposto, liquido_zoy,
@@ -153,6 +214,7 @@ def atualizar_nf(id_nf, cliente, campanha, influenciador, numero_nf, data_emissa
     conn.commit()
     conn.close()
 
+
 def excluir_nf(id_nf):
     conn = conectar()
     cursor = conn.cursor()
@@ -160,18 +222,34 @@ def excluir_nf(id_nf):
     conn.commit()
     conn.close()
 
+
 def status_real(row):
-    if row["status"] == "Recebido":
+    if row.get("status") == "Recebido":
         return "Recebido"
-    if row["data_recebimento"] < date.today():
+    data_recebimento = row.get("data_recebimento")
+    if pd.isna(data_recebimento):
+        return "Pendente"
+    if data_recebimento < date.today():
         return "Atrasado"
     return "Pendente"
+
 
 def card(titulo, valor, cor):
     st.markdown(f"""
     <div class="metric-card {cor}">
         <div class="metric-title">{titulo}</div>
         <div class="metric-value">{valor}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def forecast_card(mes, valor, percentual, qtd_nfs):
+    st.markdown(f"""
+    <div class="forecast-card">
+        <div class="forecast-month">{mes}</div>
+        <div class="forecast-value">{moeda(valor)}</div>
+        <div class="bar-bg"><div class="bar-fill" style="width:{percentual}%;"></div></div>
+        <div style="margin-top:8px; color:#6b7280; font-size:13px;">{qtd_nfs} NF(s) previstas</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -218,20 +296,27 @@ with aba1:
         qtd_nfs = len(df)
 
     col1, col2, col3, col4 = st.columns(4)
-    with col1: card("Total Faturado", moeda(total_faturado), "card-blue")
-    with col2: card("Comissão Zoy", moeda(comissao_total), "card-green")
-    with col3: card("Imposto 17,5%", moeda(imposto_total), "card-orange")
-    with col4: card("Líquido Zoy", moeda(liquido_total), "card-purple")
+    with col1:
+        card("Total Faturado", moeda(total_faturado), "card-blue")
+    with col2:
+        card("Comissão Zoy", moeda(comissao_total), "card-green")
+    with col3:
+        card("Imposto 17,5%", moeda(imposto_total), "card-orange")
+    with col4:
+        card("Líquido Zoy", moeda(liquido_total), "card-purple")
 
     col5, col6, col7, col8 = st.columns(4)
-    with col5: card("Recebido Cliente", moeda(recebido), "card-green")
-    with col6: card("A Receber", moeda(a_receber), "card-yellow")
-    with col7: card("Em Atraso", moeda(atrasado), "card-red")
-    with col8: card("Qtd. NFs", qtd_nfs, "card-blue")
+    with col5:
+        card("Recebido Cliente", moeda(recebido), "card-green")
+    with col6:
+        card("A Receber", moeda(a_receber), "card-yellow")
+    with col7:
+        card("Em Atraso", moeda(atrasado), "card-red")
+    with col8:
+        card("Qtd. NFs", qtd_nfs, "card-blue")
 
     st.divider()
-
-    st.subheader("Previsão dos próximos recebimentos")
+    st.subheader("Previsão de Recebimentos")
 
     if df.empty:
         st.info("Nenhuma NF cadastrada ainda.")
@@ -241,92 +326,74 @@ with aba1:
         if previsao.empty:
             st.success("Todas as NFs cadastradas já foram recebidas.")
         else:
-            previsao["Mês"] = pd.to_datetime(previsao["data_recebimento"]).dt.strftime("%b/%Y")
+            previsao["mes_data"] = pd.to_datetime(previsao["data_recebimento"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+            previsao["Mês"] = pd.to_datetime(previsao["mes_data"]).dt.strftime("%b/%Y")
 
             resumo = (
                 previsao
-                .groupby("Mês", as_index=False)["valor_faturado"]
-                .sum()
-                .rename(columns={"valor_faturado": "Total Previsto"})
+                .groupby(["mes_data", "Mês"], as_index=False)
+                .agg(
+                    valor_faturado=("valor_faturado", "sum"),
+                    qtd_nfs=("id", "count")
+                )
+                .sort_values("mes_data", ascending=True)
             )
 
-            resumo["Valor Formatado"] = resumo["Total Previsto"].apply(moeda)
+            valor_maximo = resumo["valor_faturado"].max()
 
-            st.subheader("Previsão de Recebimentos")
+            col_lista, col_cards = st.columns([2, 1])
 
-resumo = (
-    previsao
-    .groupby("Mês", as_index=False)["valor_faturado"]
-    .sum()
-    .sort_values("valor_faturado", ascending=False)
-)
+            with col_lista:
+                for _, row in resumo.iterrows():
+                    percentual = 0 if valor_maximo == 0 else max(4, (row["valor_faturado"] / valor_maximo) * 100)
+                    forecast_card(row["Mês"], row["valor_faturado"], percentual, int(row["qtd_nfs"]))
 
-valor_maximo = resumo["valor_faturado"].max()
+                total_previsto = resumo["valor_faturado"].sum()
+                st.markdown(f"### Total previsto: {moeda(total_previsto)}")
 
-for _, row in resumo.iterrows():
+            with col_cards:
+                hoje = date.today()
+                prox_30 = previsao[
+                    (previsao["data_recebimento"] >= hoje) &
+                    (previsao["data_recebimento"] <= hoje + timedelta(days=30))
+                ]["valor_faturado"].sum()
 
-    mes = row["Mês"]
-    valor = row["valor_faturado"]
+                prox_60 = previsao[
+                    (previsao["data_recebimento"] >= hoje) &
+                    (previsao["data_recebimento"] <= hoje + timedelta(days=60))
+                ]["valor_faturado"].sum()
 
-    tamanho_barra = max(
-        1,
-        int((valor / valor_maximo) * 30)
-    )
+                prox_90 = previsao[
+                    (previsao["data_recebimento"] >= hoje) &
+                    (previsao["data_recebimento"] <= hoje + timedelta(days=90))
+                ]["valor_faturado"].sum()
 
-    st.markdown(f"### {mes}")
-    st.markdown(f"**{moeda(valor)}**")
-    st.code("█" * tamanho_barra)
-
-st.divider()
-
-st.metric(
-    "Total Previsto",
-    moeda(resumo["valor_faturado"].sum())
-)
-
-            col30, col60, col90 = st.columns(3)
-
-            hoje = date.today()
-            prox_30 = previsao[
-                (previsao["data_recebimento"] >= hoje) &
-                (previsao["data_recebimento"] <= hoje + timedelta(days=30))
-            ]["valor_faturado"].sum()
-
-            prox_60 = previsao[
-                (previsao["data_recebimento"] >= hoje) &
-                (previsao["data_recebimento"] <= hoje + timedelta(days=60))
-            ]["valor_faturado"].sum()
-
-            prox_90 = previsao[
-                (previsao["data_recebimento"] >= hoje) &
-                (previsao["data_recebimento"] <= hoje + timedelta(days=90))
-            ]["valor_faturado"].sum()
-
-            with col30: card("Próximos 30 dias", moeda(prox_30), "card-green")
-            with col60: card("Próximos 60 dias", moeda(prox_60), "card-yellow")
-            with col90: card("Próximos 90 dias", moeda(prox_90), "card-purple")
+                card("Próximos 30 dias", moeda(prox_30), "card-green")
+                card("Próximos 60 dias", moeda(prox_60), "card-yellow")
+                card("Próximos 90 dias", moeda(prox_90), "card-purple")
 
             st.subheader("Próximos recebimentos")
 
-            proximos = previsao.sort_values("data_recebimento").head(8)
+            proximos = previsao.sort_values("data_recebimento").head(10).copy()
+            proximos["Valor"] = proximos["valor_faturado"].apply(moeda)
+            proximos["Previsão"] = pd.to_datetime(proximos["data_recebimento"], errors="coerce").dt.strftime("%d/%m/%Y")
 
             st.dataframe(
                 proximos[[
                     "cliente",
                     "campanha",
                     "influenciador",
-                    "data_recebimento",
-                    "valor_faturado",
+                    "Previsão",
+                    "Valor",
                     "status_real"
                 ]].rename(columns={
                     "cliente": "Cliente",
                     "campanha": "Campanha",
                     "influenciador": "@ Influenciador",
-                    "data_recebimento": "Previsão",
-                    "valor_faturado": "Valor",
                     "status_real": "Status"
                 }),
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
 
 # =========================
@@ -396,7 +463,7 @@ with aba3:
             filtro_status = st.selectbox("Filtrar por status", status_opcoes)
 
         with col3:
-            anos = ["Todos"] + sorted(pd.to_datetime(df["data_recebimento"]).dt.year.unique().tolist())
+            anos = ["Todos"] + sorted(pd.to_datetime(df["data_recebimento"], errors="coerce").dt.year.dropna().astype(int).unique().tolist())
             filtro_ano = st.selectbox("Filtrar por ano", anos)
 
         df_filtrado = df.copy()
@@ -408,14 +475,22 @@ with aba3:
             df_filtrado = df_filtrado[df_filtrado["status_real"] == filtro_status]
 
         if filtro_ano != "Todos":
-            df_filtrado = df_filtrado[pd.to_datetime(df_filtrado["data_recebimento"]).dt.year == filtro_ano]
+            df_filtrado = df_filtrado[pd.to_datetime(df_filtrado["data_recebimento"], errors="coerce").dt.year == filtro_ano]
 
         tabela = df_filtrado[[
             "id", "cliente", "campanha", "influenciador", "numero_nf",
             "data_emissao", "data_recebimento", "valor_faturado",
             "cache_influ", "comissao_zoy", "imposto", "liquido_zoy",
             "status_real", "observacao"
-        ]].rename(columns={
+        ]].copy()
+
+        tabela["valor_faturado"] = tabela["valor_faturado"].apply(moeda)
+        tabela["cache_influ"] = tabela["cache_influ"].apply(moeda)
+        tabela["comissao_zoy"] = tabela["comissao_zoy"].apply(moeda)
+        tabela["imposto"] = tabela["imposto"].apply(moeda)
+        tabela["liquido_zoy"] = tabela["liquido_zoy"].apply(moeda)
+
+        tabela = tabela.rename(columns={
             "id": "ID",
             "cliente": "Cliente",
             "campanha": "Campanha",
@@ -432,7 +507,7 @@ with aba3:
             "observacao": "Observação"
         })
 
-        st.dataframe(tabela, use_container_width=True)
+        st.dataframe(tabela, use_container_width=True, hide_index=True)
 
         st.divider()
         st.subheader("Editar ou excluir NF")
@@ -447,13 +522,10 @@ with aba3:
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    cliente_edit = st.text_input("Cliente", value=nf_edit["cliente"])
-                    campanha_edit = st.text_input("Campanha", value=nf_edit["campanha"])
-                    influenciador_edit = st.text_input(
-                        "@ do Influenciador",
-                        value=nf_edit["influenciador"] if pd.notna(nf_edit["influenciador"]) else ""
-                    )
-                    numero_nf_edit = st.text_input("Número da NF", value=nf_edit["numero_nf"])
+                    cliente_edit = st.text_input("Cliente", value=nf_edit["cliente"] or "")
+                    campanha_edit = st.text_input("Campanha", value=nf_edit["campanha"] or "")
+                    influenciador_edit = st.text_input("@ do Influenciador", value=nf_edit["influenciador"] if pd.notna(nf_edit["influenciador"]) else "")
+                    numero_nf_edit = st.text_input("Número da NF", value=nf_edit["numero_nf"] or "")
 
                 with col2:
                     data_emissao_edit = st.date_input("Data de Emissão", value=nf_edit["data_emissao"])
@@ -473,13 +545,10 @@ with aba3:
                 status_edit = st.selectbox(
                     "Status",
                     ["Pendente", "Recebido"],
-                    index=["Pendente", "Recebido"].index(nf_edit["status"])
+                    index=["Pendente", "Recebido"].index(nf_edit["status"] if nf_edit["status"] in ["Pendente", "Recebido"] else "Pendente")
                 )
 
-                observacao_edit = st.text_area(
-                    "Observação",
-                    value=nf_edit["observacao"] if nf_edit["observacao"] else ""
-                )
+                observacao_edit = st.text_area("Observação", value=nf_edit["observacao"] if nf_edit["observacao"] else "")
 
                 col_salvar, col_excluir = st.columns(2)
                 salvar_edicao = col_salvar.form_submit_button("Salvar alterações")
@@ -510,33 +579,48 @@ with aba4:
     if df.empty:
         st.info("Nenhuma NF cadastrada ainda.")
     else:
-        previsao = df.copy()
-        previsao["Mês"] = pd.to_datetime(previsao["data_recebimento"]).dt.strftime("%m/%Y")
+        previsao = df[df["status_real"] != "Recebido"].copy()
 
-        resumo = previsao.groupby("Mês", as_index=False).agg({
-            "valor_faturado": "sum",
-            "comissao_zoy": "sum",
-            "imposto": "sum",
-            "liquido_zoy": "sum"
-        }).rename(columns={
-            "valor_faturado": "Total Faturado Previsto",
-            "comissao_zoy": "Comissão Zoy",
-            "imposto": "Imposto",
-            "liquido_zoy": "Líquido Zoy"
-        })
+        if previsao.empty:
+            st.success("Todas as NFs cadastradas já foram recebidas.")
+        else:
+            previsao["mes_data"] = pd.to_datetime(previsao["data_recebimento"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+            previsao["Mês"] = pd.to_datetime(previsao["mes_data"]).dt.strftime("%b/%Y")
 
-        st.dataframe(resumo, use_container_width=True)
+            resumo = (
+                previsao
+                .groupby(["mes_data", "Mês"], as_index=False)
+                .agg(
+                    valor_faturado=("valor_faturado", "sum"),
+                    comissao_zoy=("comissao_zoy", "sum"),
+                    imposto=("imposto", "sum"),
+                    liquido_zoy=("liquido_zoy", "sum"),
+                    qtd_nfs=("id", "count")
+                )
+                .sort_values("mes_data", ascending=True)
+            )
 
-        fig = px.bar(
-            resumo,
-            x="Mês",
-            y="Total Faturado Previsto",
-            text=resumo["Total Faturado Previsto"].apply(moeda)
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(height=430, showlegend=False)
+            valor_maximo = resumo["valor_faturado"].max()
 
-        st.plotly_chart(fig, use_container_width=True)
+            for _, row in resumo.iterrows():
+                percentual = 0 if valor_maximo == 0 else max(4, (row["valor_faturado"] / valor_maximo) * 100)
+                forecast_card(row["Mês"], row["valor_faturado"], percentual, int(row["qtd_nfs"]))
+
+            tabela_resumo = resumo[["Mês", "valor_faturado", "comissao_zoy", "imposto", "liquido_zoy", "qtd_nfs"]].copy()
+            tabela_resumo["valor_faturado"] = tabela_resumo["valor_faturado"].apply(moeda)
+            tabela_resumo["comissao_zoy"] = tabela_resumo["comissao_zoy"].apply(moeda)
+            tabela_resumo["imposto"] = tabela_resumo["imposto"].apply(moeda)
+            tabela_resumo["liquido_zoy"] = tabela_resumo["liquido_zoy"].apply(moeda)
+
+            tabela_resumo = tabela_resumo.rename(columns={
+                "valor_faturado": "Total Faturado Previsto",
+                "comissao_zoy": "Comissão Zoy",
+                "imposto": "Imposto",
+                "liquido_zoy": "Líquido Zoy",
+                "qtd_nfs": "Qtd. NFs"
+            })
+
+            st.dataframe(tabela_resumo, use_container_width=True, hide_index=True)
 
 # =========================
 # CLIENTES
@@ -551,25 +635,20 @@ with aba5:
         clientes_resumo = df.groupby("cliente", as_index=False).agg({
             "valor_faturado": "sum",
             "comissao_zoy": "sum",
-            "liquido_zoy": "sum"
+            "liquido_zoy": "sum",
+            "id": "count"
         }).sort_values("valor_faturado", ascending=False)
 
         clientes_resumo = clientes_resumo.rename(columns={
             "cliente": "Cliente",
             "valor_faturado": "Total Faturado",
             "comissao_zoy": "Comissão Zoy",
-            "liquido_zoy": "Líquido Zoy"
+            "liquido_zoy": "Líquido Zoy",
+            "id": "Qtd. NFs"
         })
 
-        st.dataframe(clientes_resumo, use_container_width=True)
+        clientes_resumo["Total Faturado"] = clientes_resumo["Total Faturado"].apply(moeda)
+        clientes_resumo["Comissão Zoy"] = clientes_resumo["Comissão Zoy"].apply(moeda)
+        clientes_resumo["Líquido Zoy"] = clientes_resumo["Líquido Zoy"].apply(moeda)
 
-        fig_clientes = px.bar(
-            clientes_resumo,
-            x="Cliente",
-            y="Total Faturado",
-            text=clientes_resumo["Total Faturado"].apply(moeda)
-        )
-        fig_clientes.update_traces(textposition="outside")
-        fig_clientes.update_layout(height=430, showlegend=False)
-
-        st.plotly_chart(fig_clientes, use_container_width=True)
+        st.dataframe(clientes_resumo, use_container_width=True, hide_index=True)
